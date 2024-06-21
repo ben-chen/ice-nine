@@ -1,0 +1,9 @@
+[package]
+name = "ice-nine"
+version = "0.1.0"
+edition = "2021"
+authors = ["Ben Chen"]
+
+[dependencies]
+ndarray = "0.15.6"
+rand = "0.8.5"
