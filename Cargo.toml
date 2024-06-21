@@ -2,7 +2,14 @@
 name = "ice-nine"
 version = "0.1.0"
 edition = "2021"
-authors = ["Ben Chen"]
+authors = ["Ben Chen <chenbenjamin2@gmail.com>"]
+
+description = "Simple ML library"
+repository = "https://github.com/ben-chen/ice-nine"
+keywords = ["deep-learning", "machine-learning"]
+categories = ["science"]
+license = "MIT/Apache-2.0"
+readme = "README.md"
 
 [dependencies]
 ndarray = "0.15.6"

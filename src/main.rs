@@ -6,8 +6,8 @@ fn main() -> Result<(), ndarray::ShapeError> {
     let mut network = Network::new();
     for _i in 0..5 {
         let random_weights =
-            // ndarray::Array2::from_shape_simple_fn((5, 5), || 0.5);
-            0.5*ndarray::Array2::eye(5);
+            ndarray::Array2::from_shape_simple_fn((5, 5), rand::random::<f64>);
+            // 0.5*ndarray::Array2::eye(5);
         let layer = Relu::new_layer(random_weights);
         network.push(layer)?;
     }
