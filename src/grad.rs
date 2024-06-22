@@ -135,6 +135,8 @@ pub struct Optimizer<T> {
     pub max_gradient: Option<f64>,
 }
 
+const EMPTY_ACTIVATIONS_ERROR_MESSAGE: &str = "Fatal: Vec [activations] was empty, but it should always have at least one member (logic error)";
+
 impl<T: Clone> Optimizer<T> {
     /// Apply the network to an input and update gradients, returning the output and loss as a
     /// tuple
@@ -149,7 +151,7 @@ impl<T: Clone> Optimizer<T> {
         let mut activations: Vec<Array1<f64>> = vec![input.clone()];
         let mut d_activations: Vec<Array1<f64>> = vec![Array1::zeros(input.raw_dim())];
         for layer in self.network.layers.iter() {
-            let prev_activation = activations.last().expect("Fatal: Vec [activations] was empty, but it should always have at least one member (logic error)");
+            let prev_activation = activations.last().expect(EMPTY_ACTIVATIONS_ERROR_MESSAGE);
             let linear_output = layer.weights.dot(prev_activation);
             let activation = linear_output.clone().mapv_into(|x| layer.activation.f(x));
             let d_activation = linear_output.clone().mapv_into(|x| layer.activation.d_f(x));
@@ -157,7 +159,7 @@ impl<T: Clone> Optimizer<T> {
             activations.push(activation);
             d_activations.push(d_activation);
         }
-        let output = activations.last().expect("Fatal: Vec [activations] was empty, but it should always have at least one member (logic error)");
+        let output = activations.last().expect(EMPTY_ACTIVATIONS_ERROR_MESSAGE);
         let loss = self.loss.l(output, target);
 
         // Backward pass
@@ -194,7 +196,10 @@ impl<T: Clone> Optimizer<T> {
             loss_activation_gradients.push(new_loss_activation_gradient);
         }
 
-        (output.clone(), loss)
+        (
+            activations.pop().expect(EMPTY_ACTIVATIONS_ERROR_MESSAGE),
+            loss,
+        )
     }
 
     /// Update weights and zero the gradients

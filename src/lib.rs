@@ -1,4 +1,5 @@
 pub mod data;
-pub mod grad;
-pub mod layers;
-pub mod losses;
+mod grad;
+pub use grad::*;
+pub mod layer;
+pub mod loss;

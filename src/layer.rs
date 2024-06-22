@@ -1,4 +1,4 @@
-use crate::grad::{HasGrad, Layer};
+use crate::{HasGrad, Layer};
 use ndarray::Array2;
 
 pub struct Relu {}

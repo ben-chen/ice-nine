@@ -1,0 +1,21 @@
+run_name = "train_mnist_example"
+
+relu_layer_dim = 1024
+input_dim = 784
+output_dim = 10
+leaky_slope = 0.01
+num_relu_layers = 15
+temperature = 100.0
+
+steps_to_train = 10000
+microbatch_size = 20
+learning_rate = 0.01
+max_gradient = 10000.0
+
+num_test_examples = 200
+steps_per_test = 100
+
+train_data_path = "mnist_train.csv"
+test_data_path = "mnist_test.csv"
+save_weights_path = "mnist.bin"
+# load_weights_path = "mnist.bin"
