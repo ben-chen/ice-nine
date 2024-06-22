@@ -2,6 +2,7 @@ use anyhow::Error;
 use ndarray::Array1;
 
 /// Iterator over inputs and targets
+#[derive(Clone)]
 pub struct Dataset<'a, T> {
     pub inputs: &'a [Array1<f64>],
     pub targets: &'a [T],

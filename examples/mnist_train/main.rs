@@ -107,7 +107,7 @@ fn main() -> Result<(), Error> {
     let (train_inputs, train_targets) = load_mnist_data(Path::new(&config.train_data_path))?;
     let mut train_dataset = Dataset::new(&train_inputs, &train_targets)?;
     let (test_inputs, test_targets) = load_mnist_data(Path::new(&config.test_data_path))?;
-    let mut test_dataset = Dataset::new(&test_inputs, &test_targets)?;
+    let mut test_dataset = Dataset::new(&test_inputs, &test_targets)?.cycle();
 
     'training_loop: for step in 1..config.steps_to_train + 1 {
         let mut num_correct = 0.0;
@@ -135,7 +135,11 @@ fn main() -> Result<(), Error> {
         optimizer.step(config.learning_rate / config.microbatch_size as f64);
 
         if step % config.steps_per_test == 0 {
-            test(&optimizer.network, &mut test_dataset, config.num_test_examples);
+            test(
+                &optimizer.network,
+                &mut test_dataset,
+                config.num_test_examples,
+            );
         }
     }
 
@@ -145,18 +149,18 @@ fn main() -> Result<(), Error> {
         .save_weights(Path::new(&config.save_weights_path))
 }
 
-fn test(network: &Network, test_dataset: &mut Dataset<usize>, num_test_examples: usize) {
+fn test(
+    network: &Network,
+    test_dataset: &mut dyn std::iter::Iterator<Item = (&Array1<f64>, &usize)>,
+    num_test_examples: usize,
+) {
     println!("Testing on {} examples...", num_test_examples);
     if num_test_examples == 0 {
         return;
     }
     let mut num_correct = 0;
     for _i in 0..num_test_examples {
-        let (input, target) = if let Some(data_pair) = test_dataset.next() {
-            data_pair
-        } else {
-            panic!("")
-        };
+        let (input, target) = test_dataset.next().expect("Ran out of test data!");
         let output = network.f(input.clone());
         let probs = logits_to_probs(&output);
         let mut pred_digit = 0;

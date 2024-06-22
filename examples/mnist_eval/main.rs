@@ -84,7 +84,7 @@ fn main() -> Result<(), Error> {
     });
 
     let (inputs, targets) = load_mnist_data(Path::new(&config.test_data_path))?;
-    let mut dataset = Dataset::new(&inputs, &targets);
+    let mut dataset = Dataset::new(&inputs, &targets)?;
 
     let mut num_correct = 0.0;
     for step in 1.. {
