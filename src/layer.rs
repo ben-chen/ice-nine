@@ -1,7 +1,38 @@
 use crate::{HasGrad, Layer};
 use ndarray::Array2;
+use statrs::distribution::{Continuous, ContinuousCDF, Normal};
 
-pub struct Relu {}
+/// Linear layer (no activation)
+pub struct Linear;
+
+impl HasGrad<f64> for Linear {
+    /// Identity activation
+    fn f(&self, x: f64) -> f64 {
+        x
+    }
+
+    /// Derivative of identity
+    fn d_f(&self, _x: f64) -> f64 {
+        1.0
+    }
+}
+
+impl Linear {
+    /// Make new linear layer
+    pub fn new_layer(weights: Array2<f64>) -> Layer {
+        let gradients = Array2::zeros(weights.raw_dim());
+        Layer {
+            activation: Box::new(Linear {}),
+            weights,
+            gradients,
+        }
+    }
+}
+
+/// Layer with Rectified Linear Unit activation
+/// Identity function for x >= 0
+/// 0 for x < 0
+pub struct Relu;
 
 impl HasGrad<f64> for Relu {
     /// Rectified Linear Unit
@@ -35,6 +66,8 @@ impl Relu {
     }
 }
 
+/// Layer with Leaky Rectified Linear Unit activation
+/// Same as Relu, but with a slope for x < 0
 pub struct LeakyRelu {
     pub slope: f64,
 }
@@ -71,28 +104,44 @@ impl LeakyRelu {
     }
 }
 
-pub struct Linear {}
+/// Layer with Gaussian Error Linear Unit activation
+/// f(x) = x * normal_cdf(x)
+pub struct Gelu {
+    normal: Normal,
+}
 
-impl HasGrad<f64> for Linear {
-    /// Identity activation
+impl HasGrad<f64> for Gelu {
+    /// Gaussian Error Linear Unit
     fn f(&self, x: f64) -> f64 {
-        x
+        x * self.normal.cdf(x)
     }
 
-    /// Derivative of identity
-    fn d_f(&self, _x: f64) -> f64 {
-        1.0
+    /// Derivative of Gelu
+    fn d_f(&self, x: f64) -> f64 {
+        self.normal.cdf(x) + x * self.normal.pdf(x)
     }
 }
 
-impl Linear {
-    /// Make new linear layer
+impl Gelu {
+    /// Make new Gelu layer
     pub fn new_layer(weights: Array2<f64>) -> Layer {
         let gradients = Array2::zeros(weights.raw_dim());
         Layer {
-            activation: Box::new(Linear {}),
+            activation: Box::new(Gelu {
+                normal: Normal::standard(),
+            }),
             weights,
             gradients,
         }
     }
+}
+
+
+pub struct SelfAttention {
+    query_weights: Array2<f64>,
+    key_weights: Array2<f64>,
+    value_weights: Array2<f64>,
+}
+
+impl SelfAttention {
 }

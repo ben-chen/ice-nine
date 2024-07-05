@@ -6,8 +6,8 @@ use ndarray::Array1;
 pub struct Dataset<'a, T> {
     pub inputs: &'a [Array1<f64>],
     pub targets: &'a [T],
-    i: usize,
     len: usize,
+    i: usize,
 }
 
 impl<'a, T> Dataset<'a, T> {
@@ -16,12 +16,20 @@ impl<'a, T> Dataset<'a, T> {
             Ok(Dataset {
                 inputs,
                 targets,
-                i: 0,
                 len: inputs.len(),
+                i: 0,
             })
         } else {
             Err(Error::msg("[inputs] and [targets] must have the same length in a Dataset"))
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 }
 
@@ -29,12 +37,12 @@ impl<'a, T: 'a> Iterator for Dataset<'a, T> {
     type Item = (&'a Array1<f64>, &'a T);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let item = if self.i < self.inputs.len() && self.i < self.targets.len() {
+        let item = if self.i < self.len {
             Some((&self.inputs[self.i], &self.targets[self.i]))
         } else {
             None
         };
-        self.i = (self.i + 1) % self.len;
+        self.i += 1;
         item
     }
 }

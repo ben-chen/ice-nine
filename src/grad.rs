@@ -4,11 +4,11 @@ use ndarray::{Array1, Array2, ErrorKind, ShapeError};
 use std::io::{Read, Write};
 use std::path::Path;
 
-pub struct Network {
+pub struct Mlp {
     pub layers: Vec<Layer>,
 }
 
-impl Network {
+impl Mlp {
     /// Run inference without calculating gradients
     pub fn f(&self, v: Array1<f64>) -> Array1<f64> {
         self.layers.iter().fold(v, |prev_v, layer| layer.f(&prev_v))
@@ -27,7 +27,7 @@ impl Network {
 
     /// Create a new network with no layers
     pub fn new() -> Self {
-        Network { layers: Vec::new() }
+        Mlp { layers: Vec::new() }
     }
 
     /// Update weights with stored gradients
@@ -82,7 +82,7 @@ impl Network {
     }
 }
 
-impl Default for Network {
+impl Default for Mlp {
     fn default() -> Self {
         Self::new()
     }
@@ -95,7 +95,7 @@ pub struct Layer {
 }
 
 impl Layer {
-    /// Apply the layer, updating gradients
+    /// Run inference without calculating gradients
     pub fn f(&self, v: &Array1<f64>) -> Array1<f64> {
         let linear = self.weights.dot(v);
         linear.mapv_into(|x| self.activation.f(x))
@@ -131,7 +131,7 @@ pub trait Loss<T: Clone> {
 
 pub struct Optimizer<T> {
     pub loss: Box<dyn Loss<T>>,
-    pub network: Network,
+    pub network: Mlp,
     pub max_gradient: Option<f64>,
 }
 
@@ -171,9 +171,6 @@ impl<T: Clone> Optimizer<T> {
 
             for i in 0..layer.gradients.nrows() {
                 for j in 0..layer.gradients.ncols() {
-                    // dbg!(loss_activation_gradients[loss_activation_gradients.len() - 1][i]);
-                    // dbg!(d_activations[k][i]);
-                    // dbg!(activations[activations.len() - 1][j]);
                     layer.gradients[[i, j]] += loss_activation_gradients[num_layers - k][i]
                         * d_activations[k][i]
                         * activations[k - 1][j];

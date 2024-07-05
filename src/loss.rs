@@ -1,5 +1,8 @@
 use crate::Loss;
+use anyhow::Error;
 use ndarray::Array1;
+use rand::{distributions::Distribution, Rng};
+use statrs::distribution::Normal;
 
 pub struct LeastSquares;
 
@@ -54,6 +57,18 @@ impl Loss<usize> for CrossEntropy {
             .collect();
         Array1::from_vec(raw_vec)
     }
+}
+
+/// Random weight scaled using He initialization
+/// Normalizes so that the variance of the output doesn't explode or vanish exponentially with the
+/// number of layers
+/// This samples a normal distribution with mean 0 and variance 2/num_inputs_to_layer
+pub fn he_random_weight<R>(num_inputs: usize, rng: &mut R) -> Result<f64, Error>
+where
+    R: Rng + ?Sized,
+{
+    let normal = Normal::new(0.0, (2.0 / num_inputs as f64).sqrt())?;
+    Ok(normal.sample(rng))
 }
 
 pub fn logits_to_probs(logits: &Array1<f64>) -> Array1<f64> {
