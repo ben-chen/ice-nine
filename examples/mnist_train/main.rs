@@ -1,12 +1,13 @@
 use anyhow::Error;
-use ice_nine::data::Dataset;
-use ice_nine::layer::{Gelu, Linear};
-use ice_nine::loss::{he_random_weight, logits_to_probs, CrossEntropy};
-use ice_nine::{Network, Optimizer};
+use ice_nine::{
+    data::Dataset,
+    layer::{Gelu, Linear},
+    loss::{he_random_weight, logits_to_probs, CrossEntropy},
+    Mlp, Optimizer,
+};
 use ndarray::{Array1, Array2};
 use serde::Deserialize;
-use std::io::BufRead;
-use std::path::Path;
+use std::{io::BufRead, path::Path};
 
 #[derive(Deserialize)]
 struct ModelConfig {
@@ -83,7 +84,7 @@ fn main() -> Result<(), Error> {
     println!("Starting run: {}", config.run_name);
 
     // Initialize network
-    let mut network = Network::new();
+    let mut network = Mlp::new();
 
     // Relu layers
     let rng = &mut rand::thread_rng();
@@ -191,7 +192,7 @@ fn main() -> Result<(), Error> {
 }
 
 fn test(
-    network: &Network,
+    network: &Mlp,
     test_dataset: &mut dyn std::iter::Iterator<Item = (&Array1<f64>, &usize)>,
     num_test_examples: usize,
 ) {

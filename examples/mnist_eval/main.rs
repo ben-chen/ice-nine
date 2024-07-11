@@ -2,7 +2,7 @@ use anyhow::Error;
 use ice_nine::data::Dataset;
 use ice_nine::layer::{Gelu, Linear};
 use ice_nine::loss::{logits_to_probs, CrossEntropy};
-use ice_nine::{Loss, Network};
+use ice_nine::{Loss, Mlp};
 use ndarray::{Array1, Array2};
 use serde::Deserialize;
 use std::io::BufRead;
@@ -69,7 +69,7 @@ fn main() -> Result<(), Error> {
     println!("Starting run: {}", config.run_name);
 
     // Initialize network
-    let mut network = Network::new();
+    let mut network = Mlp::new();
 
     // Relu layers
     let zero_weights =
