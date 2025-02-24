@@ -72,25 +72,43 @@ fn main() -> Result<(), Error> {
     let mut network = Mlp::new();
 
     // Relu layers
-    let zero_weights =
-        Array2::from_shape_simple_fn((config.model_config.relu_layer_dim, config.model_config.input_dim), || 0.0);
+    let zero_weights = Array2::from_shape_simple_fn(
+        (
+            config.model_config.relu_layer_dim,
+            config.model_config.input_dim,
+        ),
+        || 0.0,
+    );
     let layer = Gelu::new_layer(zero_weights);
     network.push(layer)?;
     for _i in 1..config.model_config.num_relu_layers {
-        let zero_weights =
-            Array2::from_shape_simple_fn((config.model_config.relu_layer_dim, config.model_config.relu_layer_dim), || 0.0);
+        let zero_weights = Array2::from_shape_simple_fn(
+            (
+                config.model_config.relu_layer_dim,
+                config.model_config.relu_layer_dim,
+            ),
+            || 0.0,
+        );
         let layer = Gelu::new_layer(zero_weights);
         network.push(layer)?;
     }
 
     // Linear layer to project down to 10 dims
-    let zero_weights =
-        Array2::from_shape_simple_fn((config.model_config.output_dim, config.model_config.relu_layer_dim), || 0.0);
+    let zero_weights = Array2::from_shape_simple_fn(
+        (
+            config.model_config.output_dim,
+            config.model_config.relu_layer_dim,
+        ),
+        || 0.0,
+    );
     let layer = Linear::new_layer(zero_weights);
     network.push(layer)?;
 
     // Load weights
-    println!("Loading weights from {}", config.save_config.load_weights_path);
+    println!(
+        "Loading weights from {}",
+        config.save_config.load_weights_path
+    );
     network.load_weights(Path::new(&config.save_config.load_weights_path))?;
 
     let ce_loss = Box::new(CrossEntropy {

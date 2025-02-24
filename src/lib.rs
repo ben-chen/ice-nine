@@ -1,5 +1,6 @@
-pub mod data;
-mod grad;
-pub use grad::*;
-pub mod layer;
-pub mod loss;
+// pub mod data;
+pub mod tensor;
+pub use tensor::*;
+mod macros;
+pub mod optimizer;
+pub use optimizer::*;
