@@ -1,24 +1,38 @@
 use anyhow::Error;
 use ice_nine::data::Dataset;
-use ice_nine::layer::{LeakyRelu, Linear};
+use ice_nine::layer::{Gelu, Linear};
 use ice_nine::loss::{logits_to_probs, CrossEntropy};
-use ice_nine::{Loss, Network};
+use ice_nine::{Loss, Mlp};
 use ndarray::{Array1, Array2};
 use serde::Deserialize;
 use std::io::BufRead;
 use std::path::Path;
 
 #[derive(Deserialize)]
-struct Config {
-    run_name: String,
+struct ModelConfig {
     relu_layer_dim: usize,
     input_dim: usize,
     output_dim: usize,
     temperature: f64,
-    leaky_slope: f64,
     num_relu_layers: usize,
+}
+
+#[derive(Deserialize)]
+struct TestingConfig {
     test_data_path: String,
+}
+
+#[derive(Deserialize)]
+struct SaveConfig {
     load_weights_path: String,
+}
+
+#[derive(Deserialize)]
+struct Config {
+    run_name: String,
+    model_config: ModelConfig,
+    testing_config: TestingConfig,
+    save_config: SaveConfig,
 }
 
 fn read_csv(path: &Path) -> Result<Vec<Vec<usize>>, Error> {
@@ -55,36 +69,55 @@ fn main() -> Result<(), Error> {
     println!("Starting run: {}", config.run_name);
 
     // Initialize network
-    let mut network = Network::new();
+    let mut network = Mlp::new();
 
     // Relu layers
-    let random_weights =
-        Array2::from_shape_simple_fn((config.relu_layer_dim, config.input_dim), || 0.0);
-    let layer = LeakyRelu::new_layer(random_weights, config.leaky_slope);
+    let zero_weights = Array2::from_shape_simple_fn(
+        (
+            config.model_config.relu_layer_dim,
+            config.model_config.input_dim,
+        ),
+        || 0.0,
+    );
+    let layer = Gelu::new_layer(zero_weights);
     network.push(layer)?;
-    for _i in 1..config.num_relu_layers {
-        let random_weights =
-            Array2::from_shape_simple_fn((config.relu_layer_dim, config.relu_layer_dim), || 0.0);
-        let layer = LeakyRelu::new_layer(random_weights, config.leaky_slope);
+    for _i in 1..config.model_config.num_relu_layers {
+        let zero_weights = Array2::from_shape_simple_fn(
+            (
+                config.model_config.relu_layer_dim,
+                config.model_config.relu_layer_dim,
+            ),
+            || 0.0,
+        );
+        let layer = Gelu::new_layer(zero_weights);
         network.push(layer)?;
     }
 
     // Linear layer to project down to 10 dims
-    let random_weights =
-        Array2::from_shape_simple_fn((config.output_dim, config.relu_layer_dim), || 0.0);
-    let layer = Linear::new_layer(random_weights);
+    let zero_weights = Array2::from_shape_simple_fn(
+        (
+            config.model_config.output_dim,
+            config.model_config.relu_layer_dim,
+        ),
+        || 0.0,
+    );
+    let layer = Linear::new_layer(zero_weights);
     network.push(layer)?;
 
     // Load weights
-    println!("Loading weights from {}", config.load_weights_path);
-    network.load_weights(Path::new(&config.load_weights_path))?;
+    println!(
+        "Loading weights from {}",
+        config.save_config.load_weights_path
+    );
+    network.load_weights(Path::new(&config.save_config.load_weights_path))?;
 
     let ce_loss = Box::new(CrossEntropy {
-        temperature: config.temperature,
+        temperature: config.model_config.temperature,
     });
 
-    let (inputs, targets) = load_mnist_data(Path::new(&config.test_data_path))?;
+    let (inputs, targets) = load_mnist_data(Path::new(&config.testing_config.test_data_path))?;
     let mut dataset = Dataset::new(&inputs, &targets)?;
+    println!("Test dataset len: {}", dataset.len());
 
     let mut num_correct = 0.0;
     for step in 1.. {
