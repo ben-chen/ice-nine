@@ -6,7 +6,7 @@ macro_rules! tensor {
         let dims = vec![$($d),*];
 
         // Validate that product of dimensions matches data length
-        let expected_len = dims.iter().product();
+        let expected_len: usize = dims.iter().product();
         if data.len() != expected_len {
             panic!("Data length {} does not match product of dimensions {}", data.len(), expected_len);
         }
@@ -20,7 +20,7 @@ macro_rules! tensor {
         let dims = vec![$($d),*];
 
         // Validate that product of dimensions matches data length
-        let expected_len = dims.iter().product();
+        let expected_len: usize = dims.iter().product();
         if data.len() != expected_len {
             panic!("Data length {} does not match product of dimensions {}", data.len(), expected_len);
         }

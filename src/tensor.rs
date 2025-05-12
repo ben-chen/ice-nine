@@ -2,6 +2,7 @@ use anyhow::{Error, Result};
 use num_traits::NumAssign;
 use statrs::distribution::{Continuous, ContinuousCDF, Normal};
 use std::fmt::{self, Debug, Display, Formatter};
+use std::iter::Sum;
 use std::ops::{Add, Div, Mul, Neg, Rem, Sub};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -9,11 +10,19 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 /// gradients (Vec<Array>).
 type GradFn<A> = Box<dyn Fn(Array<A>, &Vec<Tensor<A>>) -> Vec<Array<A>> + 'static>;
 
-pub trait DataType: Clone + Display + Debug + NumAssign + Neg<Output = Self> + 'static {
+pub trait DataType:
+    Clone + Display + Debug + NumAssign + Neg<Output = Self> + Sum + PartialOrd + Sync + Send + 'static
+{
     fn into_f64(self) -> f64;
     fn from_f64(f: f64) -> Self;
     fn powi(&self, n: i32) -> Self;
     fn powf(&self, n: Self) -> Self;
+    fn exp(&self) -> Self {
+        Self::from_f64(f64::exp(self.clone().into_f64()))
+    }
+    fn sqrt(&self) -> Self {
+        self.powf(Self::from_f64(0.5))
+    }
 }
 impl DataType for f32 {
     fn into_f64(self) -> f64 {
@@ -74,21 +83,22 @@ impl<A: DataType> BackwardNode<A> {
 
 impl<A: DataType> Array<A> {
     pub fn new(dim: Box<[usize]>, data: Arc<Vec<A>>) -> Self {
+        assert!(!dim.is_empty(), "Array dimensions cannot be empty");
+        assert_eq!(
+            data.len(),
+            dim.iter().product::<usize>(),
+            "Data length does not match dimensions"
+        );
+
         Array { dim, data }
     }
 
     pub fn zeros(dim: &[usize]) -> Self {
-        Array {
-            dim: dim.into(),
-            data: Arc::new(vec![A::zero(); dim.iter().product()]),
-        }
+        Array::new(dim.into(), Arc::new(vec![A::zero(); dim.iter().product()]))
     }
 
     pub fn zeros_like(&self) -> Self {
-        Array {
-            dim: self.dim.clone(),
-            data: Arc::new(vec![A::zero(); self.data.len()]),
-        }
+        Array::new(self.dim.clone(), Arc::new(vec![A::zero(); self.data.len()]))
     }
 
     pub fn shape(&self) -> &[usize] {
@@ -126,6 +136,49 @@ impl<A: DataType> Array<A> {
             .collect();
         Array::new(self.dim.clone(), Arc::new(result_array))
     }
+
+    /// Element-wise exp
+    pub fn exp(&self) -> Self {
+        let result_array = self
+            .data
+            .iter()
+            .map(|x| A::from_f64(f64::exp(x.clone().into_f64())))
+            .collect();
+        Array::new(self.dim.clone(), Arc::new(result_array))
+    }
+
+    /// Element-wise log
+    pub fn log(&self) -> Self {
+        let result_array = self
+            .data
+            .iter()
+            .map(|x| A::from_f64(f64::ln(x.clone().into_f64())))
+            .collect();
+        Array::new(self.dim.clone(), Arc::new(result_array))
+    }
+
+    /// Index
+    pub fn index(&self, index: &[usize]) -> Self {
+        let offset = get_offset_from_index(index, &self.dim);
+        Array::new(Box::new([1]), Arc::new(vec![self.data[offset].clone()]))
+    }
+}
+
+fn get_offset_from_index(index: &[usize], dim: &[usize]) -> usize {
+    assert_eq!(
+        index.len(),
+        dim.len(),
+        "Index length must match tensor dimensions"
+    );
+
+    let mut offset = 0;
+    let mut prod = 1;
+    for (i, &d) in index.iter().rev().enumerate() {
+        assert!(d < dim[dim.len() - 1 - i], "Index out of bounds");
+        offset += d * prod;
+        prod *= dim[dim.len() - 1 - i];
+    }
+    offset
 }
 
 #[derive(Clone)]
@@ -184,7 +237,7 @@ impl<A: DataType + Display> Display for Tensor<A> {
     }
 }
 
-fn format_nested<A: Display>(
+fn format_nested<A: Debug + Display>(
     f: &mut Formatter<'_>,
     data: &[A],
     dims: &[usize],
@@ -221,18 +274,16 @@ impl<A: DataType> Debug for Tensor<A> {
         let data = &inner_tensor.array.data;
         let dims = &inner_tensor.array.dim;
         format_nested(f, data, dims, 0, 0)?;
-        write!(
-            f,
-            "\nshape: [{}], dtype: {}, require_grad: {}, grad: {:?}, backward_node: {:?}",
-            dims.iter()
-                .map(|d| d.to_string())
-                .collect::<Vec<_>>()
-                .join(", "),
-            self.data_type(),
-            inner_tensor.require_grad,
-            inner_tensor.grad,
-            inner_tensor.backward_node,
-        )
+
+        if let Some(grad) = &inner_tensor.grad {
+            write!(f, "\ngrad: {:?}", grad.data)?;
+        }
+
+        if let Some(backward_node) = &inner_tensor.backward_node {
+            write!(f, "\nbackward_node: {:?}", backward_node)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -254,6 +305,7 @@ impl<A: DataType> Tensor<A> {
         self.inner_tensor().grad.clone()
     }
 
+    /// Return an Arc to the raw data of the tensor
     pub fn data(&self) -> Arc<Vec<A>> {
         self.inner_tensor().array.data.clone()
     }
@@ -300,12 +352,50 @@ impl<A: DataType> Tensor<A> {
         ))
     }
 
+    /// Make a tensor of all zeros with the same shape as another tensor
     pub fn zeros_like(&self) -> Self {
         let inner_tensor = self.inner_tensor();
         let data = Arc::new(vec![A::zero(); inner_tensor.array.data.len()]);
         Tensor::wrap(InnerTensor::_new(
             Array::new(inner_tensor.array.dim.clone(), data),
             inner_tensor.require_grad,
+            None,
+            None,
+        ))
+    }
+
+    /// Make a tensor of all ones with a given shape
+    pub fn ones(dim: &[usize], require_grad: bool) -> Self {
+        let data = Arc::new(vec![A::one(); dim.iter().product()]);
+        Tensor::wrap(InnerTensor::_new(
+            Array::new(dim.into(), data),
+            require_grad,
+            None,
+            None,
+        ))
+    }
+
+    /// Make a tensor of all ones with the same shape as another tensor
+    pub fn ones_like(&self) -> Self {
+        let inner_tensor = self.inner_tensor();
+        let data = Arc::new(vec![A::one(); inner_tensor.array.data.len()]);
+        Tensor::wrap(InnerTensor::_new(
+            Array::new(inner_tensor.array.dim.clone(), data),
+            inner_tensor.require_grad,
+            None,
+            None,
+        ))
+    }
+
+    /// Make a tensor of random values with a given shape
+    pub fn random(dim: &[usize], require_grad: bool) -> Self {
+        let data = Arc::new(vec![
+            A::from_f64(rand::random::<f64>());
+            dim.iter().product()
+        ]);
+        Tensor::wrap(InnerTensor::_new(
+            Array::new(dim.into(), data),
+            require_grad,
             None,
             None,
         ))
@@ -368,6 +458,7 @@ impl<A: DataType> Tensor<A> {
 
             let (input_tensors, grad_fn) = if let Some(backward_node) = &inner_tensor.backward_node
             {
+                // eprintln!("Backward node: {:?}", backward_node);
                 let input_tensors = &backward_node.input_tensors;
                 let grad_fn = &backward_node.grad_fn;
                 (input_tensors, grad_fn)
@@ -428,6 +519,7 @@ impl<A: DataType> Tensor<A> {
     pub fn zero_grad(&mut self) {
         let mut inner_tensor = self.inner_tensor_mut();
         inner_tensor.grad = None;
+        inner_tensor.backward_node = None;
     }
 
     // Math operations
@@ -525,6 +617,101 @@ impl<A: DataType> Tensor<A> {
         ))
     }
 
+    /// Sum across the rows of a 2-D tensor, keeping dims
+    /// Yeah it's jank but I'm not implementing views right now
+    /// It's dumb to repeat the sums but w/e
+    pub fn sum_rows(&self) -> Self {
+        let self_inner = self.inner_tensor();
+        let num_rows = self_inner.shape()[0];
+        let num_cols = self_inner.shape()[1];
+        let row_sums: Vec<_> = self_inner
+            .array
+            .data
+            .chunks(num_cols)
+            .flat_map(|row| std::iter::repeat_n(row.iter().cloned().sum::<A>(), num_cols))
+            .collect();
+
+        let require_grad = self_inner.require_grad;
+        let backward_node = if require_grad {
+            let grad_fn: GradFn<A> = Box::new(|self_grad, inputs| {
+                assert_eq!(inputs.len(), 1, "Sum rows grad_fn requires 1 input");
+                let num_cols = inputs[0].shape()[1];
+                let self_grad_row_sums: Vec<_> = self_grad
+                    .data
+                    .chunks(num_cols)
+                    .flat_map(|chunk| {
+                        std::iter::repeat_n(chunk.iter().cloned().sum::<A>(), num_cols)
+                    })
+                    .collect();
+                vec![Array::new(
+                    inputs[0].shape().into(),
+                    Arc::new(self_grad_row_sums),
+                )]
+            });
+            Some(BackwardNode::new(grad_fn, vec![self.clone()], "sum_rows"))
+        } else {
+            None
+        };
+
+        Tensor::wrap(InnerTensor::_new(
+            Array::new(Box::new([num_rows, num_cols]), Arc::new(row_sums)),
+            require_grad,
+            None,
+            backward_node,
+        ))
+    }
+
+    /// Sum across the columns of a 2-D tensor, keeping dims
+    pub fn sum_cols(&self) -> Self {
+        let self_inner = self.inner_tensor();
+        let num_rows = self_inner.shape()[0];
+        let num_cols = self_inner.shape()[1];
+
+        let mut col_sums: Vec<_> = vec![A::zero(); num_rows * num_cols];
+        for (n, v) in self_inner.array.data.iter().enumerate() {
+            col_sums[n % num_cols] += v.clone();
+        }
+        for i in 1..num_rows {
+            let row_start = i * num_cols;
+            for j in 0..num_cols {
+                col_sums[row_start + j] = col_sums[j].clone();
+            }
+        }
+
+        let require_grad = self_inner.require_grad;
+        let backward_node = if require_grad {
+            let grad_fn: GradFn<A> = Box::new(|self_grad, inputs| {
+                assert_eq!(inputs.len(), 1, "Sum cols grad_fn requires 1 input");
+                let shape = inputs[0].shape();
+                let num_rows = shape[0];
+                let num_cols = shape[1];
+
+                let mut self_grad_col_sums = vec![A::zero(); num_rows * num_cols];
+                for (n, v) in self_grad.data.iter().enumerate() {
+                    self_grad_col_sums[n % num_cols] += v.clone();
+                }
+                for i in 1..num_rows {
+                    let row_start = i * num_cols;
+                    for j in 0..num_cols {
+                        self_grad_col_sums[row_start + j] = self_grad_col_sums[j].clone();
+                    }
+                }
+                vec![Array::new(shape.into(), Arc::new(self_grad_col_sums))]
+            });
+
+            Some(BackwardNode::new(grad_fn, vec![self.clone()], "sum_cols"))
+        } else {
+            None
+        };
+
+        Tensor::wrap(InnerTensor::_new(
+            Array::new(Box::new([num_rows, num_cols]), Arc::new(col_sums)),
+            require_grad,
+            None,
+            backward_node,
+        ))
+    }
+
     /// Matrix multiplication
     pub fn matmul(&self, other: &Self) -> Result<Self> {
         let self_inner = self.inner_tensor();
@@ -569,7 +756,7 @@ impl<A: DataType> Tensor<A> {
                     .array
                     .data
                     .iter()
-                    .map(|x| x.clone().powf(A::from_f64(0.5)))
+                    .map(|x| x.clone().powf(A::from_f64(-0.5)) * A::from_f64(0.5))
                     .zip(self_grad.data.iter())
                     .map(|(deriv, self_grad)| deriv * self_grad.clone())
                     .collect();
@@ -577,6 +764,221 @@ impl<A: DataType> Tensor<A> {
                 vec![deriv_array]
             });
             Some(BackwardNode::new(grad_fn, vec![self.clone()], "sqrt"))
+        } else {
+            None
+        };
+
+        Tensor::wrap(InnerTensor::_new(
+            result_array,
+            require_grad,
+            None,
+            backward_node,
+        ))
+    }
+
+    /// Element-wise square
+    pub fn square(&self) -> Self {
+        return self * self;
+    }
+
+    /// Element-wise exp
+    pub fn exp(&self) -> Self {
+        let self_inner = self.inner_tensor();
+        let result_array = self_inner.array.exp();
+        let result_cache = result_array.clone();
+        let require_grad = self_inner.require_grad;
+        let backward_node = if require_grad {
+            let grad_fn: GradFn<A> = Box::new(move |self_grad, inputs| {
+                assert_eq!(inputs.len(), 1, "Exp grad_fn requires 1 input");
+                let input_inner = inputs[0].inner_tensor();
+                let deriv_data: Vec<A> = result_cache
+                    .data
+                    .iter()
+                    .zip(self_grad.data.iter())
+                    .map(|(x, self_grad)| x.clone() * self_grad.clone())
+                    .collect();
+                let deriv_array = Array::new(input_inner.shape().into(), Arc::new(deriv_data));
+                vec![deriv_array]
+            });
+            Some(BackwardNode::new(grad_fn, vec![self.clone()], "exp"))
+        } else {
+            None
+        };
+
+        Tensor::wrap(InnerTensor::_new(
+            result_array,
+            require_grad,
+            None,
+            backward_node,
+        ))
+    }
+
+    /// Element-wise log
+    pub fn log(&self) -> Self {
+        let self_inner = self.inner_tensor();
+        let result_array = self_inner.array.log();
+        let require_grad = self_inner.require_grad;
+        let backward_node = if require_grad {
+            let grad_fn: GradFn<A> = Box::new(|self_grad, inputs| {
+                assert_eq!(inputs.len(), 1, "Log grad_fn requires 1 input");
+                let input_inner = inputs[0].inner_tensor();
+                let deriv_data: Vec<A> = input_inner
+                    .array
+                    .data
+                    .iter()
+                    .zip(self_grad.data.iter())
+                    .map(|(x, self_grad)| self_grad.clone() / x.clone())
+                    .collect();
+                let deriv_array = Array::new(input_inner.shape().into(), Arc::new(deriv_data));
+                vec![deriv_array]
+            });
+            Some(BackwardNode::new(grad_fn, vec![self.clone()], "log"))
+        } else {
+            None
+        };
+
+        Tensor::wrap(InnerTensor::_new(
+            result_array,
+            require_grad,
+            None,
+            backward_node,
+        ))
+    }
+
+    /// Index
+    pub fn index(&self, index: &[usize]) -> Self {
+        let self_inner = self.inner_tensor();
+        let result_array = self_inner.array.index(index);
+
+        let require_grad = self_inner.require_grad;
+        let index_clone = index.to_vec();
+        let backward_node = if require_grad {
+            let grad_fn: GradFn<A> = Box::new(move |self_grad, inputs| {
+                assert_eq!(inputs.len(), 1, "Index grad_fn requires 1 input");
+                let input = &inputs[0];
+                let shape = input.shape();
+                let mut out_grad = vec![A::zero(); shape.iter().product()];
+                out_grad[get_offset_from_index(&index_clone, &shape)] = self_grad.data[0].clone();
+
+                vec![Array::new(shape.into(), Arc::new(out_grad))]
+            });
+            Some(BackwardNode::new(grad_fn, vec![self.clone()], "index"))
+        } else {
+            None
+        };
+
+        Tensor::wrap(InnerTensor::_new(
+            result_array,
+            require_grad,
+            None,
+            backward_node,
+        ))
+    }
+
+    /// Col-wise max, keeping dims
+    /// Doesn't support gradients
+    pub fn max_cols(&self) -> Self {
+        let inner = self.inner_tensor();
+        let num_rows = inner.shape()[0];
+        let num_cols = inner.shape()[1];
+
+        let mut col_maxes: Vec<A> = vec![A::from_f64(f64::NEG_INFINITY); num_rows * num_cols];
+        for (n, v) in inner.array.data.iter().enumerate() {
+            let col = n % num_cols;
+            if *v > col_maxes[col] {
+                col_maxes[col] = v.clone();
+            }
+        }
+
+        for i in 1..num_rows {
+            let row_start = i * num_cols;
+            for j in 0..num_cols {
+                col_maxes[row_start + j] = col_maxes[j].clone();
+            }
+        }
+
+        Tensor::new(&[num_rows, num_cols], Arc::new(col_maxes), false)
+    }
+
+    /// Row-wise max, keeping dims
+    /// Doesn't support gradients
+    pub fn max_rows(&self) -> Self {
+        let inner = self.inner_tensor();
+        let num_rows = inner.shape()[0];
+        let num_cols = inner.shape()[1];
+
+        let mut row_maxes: Vec<A> = vec![A::from_f64(f64::NEG_INFINITY); num_rows * num_cols];
+        for (n, v) in inner.array.data.iter().enumerate() {
+            let row = n / num_cols;
+            if *v > row_maxes[row * num_cols] {
+                row_maxes[row * num_cols] = v.clone();
+            }
+        }
+
+        for j in 1..num_cols {
+            for i in 0..num_rows {
+                row_maxes[i * num_cols + j] = row_maxes[i * num_cols].clone();
+            }
+        }
+
+        Tensor::new(&[num_rows, num_cols], Arc::new(row_maxes), false)
+    }
+
+    /// Col-wise softmax
+    pub fn softmax_col(&self) -> Self {
+        let col_maxes = &self.max_cols();
+        let stabilized_tensor = self - col_maxes;
+        let exp_tensor = &stabilized_tensor.exp();
+        let sum_tensor = &exp_tensor.sum_cols();
+        let softmax_tensor = exp_tensor / sum_tensor;
+
+        softmax_tensor
+    }
+
+    /// Row-wise softmax
+    pub fn softmax_row(&self) -> Self {
+        let row_maxes = &self.max_rows();
+        let stabilized_tensor = self - row_maxes;
+        let exp_tensor = stabilized_tensor.exp();
+        let sum_tensor = exp_tensor.sum_rows();
+        let softmax_tensor = &exp_tensor / &sum_tensor;
+
+        softmax_tensor
+    }
+
+    /// Broadcast 1-D tensor to 2-D tensor as columns
+    pub fn broadcast_col(&self, num_cols: usize) -> Self {
+        let dim = self.shape();
+        assert_eq!(dim.len(), 1, "Tensor must be 1-D");
+        let num_rows = dim[0];
+        let self_inner = self.inner_tensor();
+        let result_data: Vec<_> = self_inner
+            .array
+            .data
+            .iter()
+            .flat_map(|x| std::iter::repeat_n(x, num_cols))
+            .cloned()
+            .collect();
+        let result_array = Array::new(Box::new([num_rows, num_cols]), Arc::new(result_data));
+        let require_grad = self_inner.require_grad;
+        let backward_node = if require_grad {
+            let grad_fn: GradFn<A> = Box::new(|self_grad, inputs| {
+                assert_eq!(inputs.len(), 1, "Broadcast col grad_fn requires 1 input");
+                let num_rows = self_grad.shape()[0];
+                let num_cols = self_grad.shape()[1];
+                let self_grad_row_sums: Vec<_> = self_grad
+                    .data
+                    .chunks(num_cols)
+                    .map(|row| row.iter().cloned().sum::<A>())
+                    .collect();
+                let deriv_array = Array::new(Box::new([num_rows]), Arc::new(self_grad_row_sums));
+                vec![deriv_array]
+            });
+            Some(BackwardNode::new(
+                grad_fn,
+                vec![self.clone()],
+                "broadcast_col",
+            ))
         } else {
             None
         };
@@ -645,7 +1047,7 @@ impl<A: DataType> Sub<A> for &Tensor<A> {
 impl<A: DataType> Mul<A> for &Tensor<A> {
     type Output = Tensor<A>;
 
-    /// Element-wise multiplication
+    /// Multiplication by a constant
     fn mul(self, other: A) -> Tensor<A> {
         let self_inner = self.inner_tensor();
         let result_array = &self_inner.array * other.clone();
@@ -671,7 +1073,7 @@ impl<A: DataType> Mul<A> for &Tensor<A> {
 impl<A: DataType> Div<A> for &Tensor<A> {
     type Output = Tensor<A>;
 
-    /// Element-wise division
+    /// Division by a constant
     fn div(self, other: A) -> Tensor<A> {
         let self_inner = self.inner_tensor();
         let result_array = &self_inner.array / other.clone();
@@ -799,7 +1201,7 @@ impl<A: DataType> Mul for &Tensor<A> {
         let require_grad = self_inner.require_grad || other_inner.require_grad;
         let backward_node = if require_grad {
             let grad_fn: GradFn<A> = Box::new(|self_grad, inputs| {
-                assert_eq!(inputs.len(), 2, "Add grad_fn requires 2 inputs");
+                assert_eq!(inputs.len(), 2, "Mul grad_fn requires 2 inputs");
                 vec![
                     &self_grad * &inputs[1].inner_tensor().array,
                     &self_grad * &inputs[0].inner_tensor().array,
@@ -820,6 +1222,43 @@ impl<A: DataType> Mul for &Tensor<A> {
             grad: None,
             backward_node,
         })
+    }
+}
+
+impl<A: DataType> Div for &Tensor<A> {
+    type Output = Tensor<A>;
+
+    /// Element-wise division
+    fn div(self, other: Self) -> Tensor<A> {
+        let self_inner = self.inner_tensor();
+        let other_inner = other.inner_tensor();
+        let result_array = &self_inner.array / &other_inner.array;
+
+        let require_grad = self_inner.require_grad || other_inner.require_grad;
+        let backward_node = if require_grad {
+            let grad_fn: GradFn<A> = Box::new(|self_grad, inputs| {
+                assert_eq!(inputs.len(), 2, "Div grad_fn requires 2 inputs");
+                let g = &self_grad;
+                let x = &inputs[0].inner_tensor().array;
+                let y = &inputs[1].inner_tensor().array;
+                let ret = vec![g / y, -&(&(g * x) / &(y * y))];
+                ret
+            });
+            Some(BackwardNode::new(
+                grad_fn,
+                vec![self.clone(), other.clone()],
+                "div",
+            ))
+        } else {
+            None
+        };
+
+        Tensor::wrap(InnerTensor::_new(
+            result_array,
+            require_grad,
+            None,
+            backward_node,
+        ))
     }
 }
 
@@ -864,6 +1303,7 @@ impl<A: DataType> Sub<A> for &Array<A> {
 impl<A: DataType> Mul<A> for &Array<A> {
     type Output = Array<A>;
 
+    /// Multiplication by a constant
     fn mul(self, other: A) -> Self::Output {
         let result_array = self
             .data
@@ -877,6 +1317,7 @@ impl<A: DataType> Mul<A> for &Array<A> {
 impl<A: DataType> Div<A> for &Array<A> {
     type Output = Array<A>;
 
+    /// Division by a constant
     fn div(self, other: A) -> Self::Output {
         let result_array = self
             .data
@@ -931,6 +1372,7 @@ impl<A: DataType> Sub for &Array<A> {
 impl<A: DataType> Mul for &Array<A> {
     type Output = Array<A>;
 
+    /// Element-wise multiplication
     fn mul(self, other: Self) -> Self::Output {
         let result_array = self
             .data
@@ -946,6 +1388,7 @@ impl<A: DataType> Mul for &Array<A> {
 impl<A: DataType> Div for &Array<A> {
     type Output = Array<A>;
 
+    /// Element-wise division
     fn div(self, other: Self) -> Self::Output {
         let result_array = self
             .data

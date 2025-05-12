@@ -1,17 +1,5 @@
 use crate::{Array, DataType, Tensor};
 
-pub trait Model<A: DataType> {
-    fn forward(&self, x: &Tensor<A>) -> Tensor<A>;
-
-    fn parameters(&self) -> Vec<Tensor<A>>;
-
-    fn print_parameters(&self) {
-        for (i, p) in self.parameters().iter().enumerate() {
-            println!("Parameter {}:\n{:?}", i, p);
-        }
-    }
-}
-
 pub trait Optimizer<A: DataType> {
     fn step_num(&self) -> usize;
     fn step(&mut self);
@@ -122,6 +110,7 @@ impl<A: DataType> Optimizer<A> for AdamW<A> {
         self.step
     }
 
+    /// Performs a single optimization step.
     fn step(&mut self) {
         for (p_index, p) in self.parameters.iter_mut().enumerate() {
             // decay update
@@ -141,8 +130,8 @@ impl<A: DataType> Optimizer<A> for AdamW<A> {
 
             // update parameter
             p.update(self.lr.clone(), &effective_grad);
-            self.step += 1;
         }
+        self.step += 1;
     }
 
     fn zero_grad(&mut self) {

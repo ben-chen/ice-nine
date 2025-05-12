@@ -1,6 +1,8 @@
 // pub mod data;
 pub mod tensor;
 pub use tensor::*;
+pub mod nn;
+pub use nn::*;
 pub mod llm;
 pub use llm::*;
 mod macros;

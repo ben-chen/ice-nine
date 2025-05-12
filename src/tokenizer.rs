@@ -1,5 +1,6 @@
 use anyhow::{Error, Result};
 use base64::{engine::general_purpose, Engine};
+use rand::prelude::Distribution;
 use rayon::prelude::*;
 use std::collections::{BinaryHeap, HashMap};
 use std::fs::File;
@@ -7,11 +8,20 @@ use std::io::{BufReader, BufWriter};
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::{DataType, Tensor};
+
 type Token = Arc<[u8]>;
 
 type TokenId = u32;
 
 type Bigram = (TokenId, TokenId);
+
+#[derive(Debug, Clone, Copy)]
+pub enum PaddingStrategy {
+    None,
+    MaxLength(usize),
+    LongestInBatch,
+}
 
 fn bigram_to_u64(bigram: Bigram) -> u64 {
     let (a, b) = bigram;
@@ -24,16 +34,27 @@ fn u64_to_bigram(bigram: u64) -> Bigram {
     (a, b)
 }
 
+const UNK_BYTES: &[u8] = "<unk>".as_bytes();
+const BOS_BYTES: &[u8] = "<s>".as_bytes();
+const EOS_BYTES: &[u8] = "</s>".as_bytes();
+const PAD_BYTES: &[u8] = "<pad>".as_bytes();
+
+type TokenAndId = (Token, TokenId);
+
 pub struct Tokenizer {
     pub id_to_token: Arc<[Token]>,
     pub token_to_id: HashMap<Token, TokenId>,
     pub max_token_len: usize,
+    pub unk_token_and_id: Option<TokenAndId>,
+    pub bos_token_and_id: Option<TokenAndId>,
+    pub eos_token_and_id: Option<TokenAndId>,
+    pub pad_token_and_id: Option<TokenAndId>,
 }
 
 impl Tokenizer {
     pub fn new(tokens: Arc<[Token]>) -> Self {
         let mut max_token_len = 0;
-        let token_to_id = tokens
+        let token_to_id: HashMap<_, _> = tokens
             .iter()
             .enumerate()
             .map(|(id, token)| {
@@ -42,10 +63,32 @@ impl Tokenizer {
             })
             .collect();
 
+        // Add special tokens
+        let unk_token = &Arc::from(UNK_BYTES);
+        let unk_token_and_id = token_to_id
+            .get(unk_token)
+            .map(|&id| (unk_token.clone(), id));
+        let bos_token = &Arc::from(BOS_BYTES);
+        let bos_token_and_id = token_to_id
+            .get(bos_token)
+            .map(|&id| (bos_token.clone(), id));
+        let eos_token = &Arc::from(EOS_BYTES);
+        let eos_token_and_id = token_to_id
+            .get(eos_token)
+            .map(|&id| (eos_token.clone(), id));
+        let pad_token = &Arc::from(PAD_BYTES);
+        let pad_token_and_id = token_to_id
+            .get(pad_token)
+            .map(|&id| (pad_token.clone(), id));
+
         Self {
             id_to_token: tokens,
             token_to_id,
             max_token_len,
+            unk_token_and_id,
+            bos_token_and_id,
+            eos_token_and_id,
+            pad_token_and_id,
         }
     }
 
@@ -59,62 +102,179 @@ impl Tokenizer {
         save_vocab_json(&self.id_to_token, path)
     }
 
-    pub fn split_into_tokens(&self, text: &str) -> Result<Vec<Token>> {
-        let byte_text: Arc<_> = text.bytes().collect();
+    pub fn split_into_tokens(
+        &self,
+        texts: &[&str],
+        add_special_characters: bool,
+        padding_strategy: PaddingStrategy,
+    ) -> Result<Vec<Vec<Token>>> {
+        let mut token_lists = texts
+            .into_par_iter()
+            .map(|text| {
+                let byte_text: Arc<_> = text.bytes().collect();
 
-        let mut tokens = vec![];
-        let mut start_idx = 0;
-        'first_idx: while start_idx < byte_text.len() {
-            let max_slice_len = std::cmp::min(self.max_token_len, byte_text.len() - start_idx);
-            for slice_len in (1..=max_slice_len).rev() {
-                let end_idx = start_idx + slice_len;
-                let potential_token: Token = Arc::from(&byte_text[start_idx..end_idx]);
-                if self.token_to_id.contains_key(&potential_token) {
-                    tokens.push(potential_token);
-                    start_idx += slice_len;
-                    continue 'first_idx;
+                let mut tokens = vec![];
+                if add_special_characters {
+                    if let Some((_, bos_tok_id)) = &self.bos_token_and_id {
+                        tokens.push(self.id_to_token[*bos_tok_id as usize].clone());
+                    }
                 }
-            }
+                let mut start_idx = 0;
+                'first_idx: while start_idx < byte_text.len() {
+                    let max_slice_len =
+                        std::cmp::min(self.max_token_len, byte_text.len() - start_idx);
+                    for slice_len in (1..=max_slice_len).rev() {
+                        let end_idx = start_idx + slice_len;
+                        let potential_token: Token = Arc::from(&byte_text[start_idx..end_idx]);
+                        if self.token_to_id.contains_key(&potential_token) {
+                            tokens.push(potential_token);
+                            start_idx += slice_len;
+                            continue 'first_idx;
+                        }
+                    }
 
-            return Err(Error::msg(format!(
-                "No token found for slice: {}",
-                String::from_utf8(byte_text[start_idx..].to_vec()).unwrap_or_else(|_| {
-                    format!("Invalid UTF-8 sequence: {:?}", &byte_text[start_idx..])
-                })
-            )));
+                    return Err(Error::msg(format!(
+                        "No token found for slice: {}",
+                        String::from_utf8(byte_text[start_idx..].to_vec()).unwrap_or_else(|_| {
+                            format!("Invalid UTF-8 sequence: {:?}", &byte_text[start_idx..])
+                        })
+                    )));
+                }
+
+                if add_special_characters {
+                    if let Some((_, eos_tok_id)) = &self.eos_token_and_id {
+                        tokens.push(self.id_to_token[*eos_tok_id as usize].clone());
+                    }
+                }
+
+                Ok(tokens)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let pad_length = match padding_strategy {
+            PaddingStrategy::MaxLength(max_length) => Some(max_length),
+            PaddingStrategy::LongestInBatch => {
+                let longest = token_lists
+                    .iter()
+                    .map(|tokens| tokens.len())
+                    .max()
+                    .unwrap_or(0);
+                Some(longest)
+            }
+            PaddingStrategy::None => None,
+        };
+        if add_special_characters {
+            match pad_length {
+                Some(length) => {
+                    if let Some((_, pad_tok_id)) = &self.pad_token_and_id {
+                        token_lists.par_iter_mut().for_each(|tokens| {
+                            let pad_len = length - tokens.len();
+                            let pad_token = self.id_to_token[*pad_tok_id as usize].clone();
+                            tokens.extend(std::iter::repeat(pad_token).take(pad_len));
+                        });
+                    } else {
+                        return Err(Error::msg(format!(
+                            "Pad token should be set for PaddingStrategy {:?}",
+                            padding_strategy
+                        )));
+                    }
+                }
+                None => (),
+            }
         }
-        Ok(tokens)
+        Ok(token_lists)
+    }
+
+    /// Return the size of the vocabulary
+    pub fn vocab_size(&self) -> usize {
+        self.id_to_token.len()
     }
 
     /// Encode a list of strings into a list of token IDs
-    pub fn encode(&self, texts: &[&str]) -> Result<Vec<Vec<TokenId>>> {
-        texts
-            .par_iter()
-            .map(|&text| {
-                self.split_into_tokens(text)?
-                    .iter()
-                    .map(|token| Ok(*self.token_to_id.get(token).unwrap()))
-                    .collect::<Result<Vec<_>>>()
+    pub fn encode(
+        &self,
+        texts: &[&str],
+        add_special_characters: bool,
+        padding_strategy: PaddingStrategy,
+    ) -> Result<Vec<Vec<TokenId>>> {
+        let tokens_lists =
+            self.split_into_tokens(texts, add_special_characters, padding_strategy)?;
+
+        let token_id_lists = tokens_lists
+            .into_par_iter()
+            .map(|tokens| {
+                tokens
+                    .into_iter()
+                    .map(|token| self.token_to_id[&token] as TokenId)
+                    .collect::<Vec<TokenId>>()
             })
-            .collect::<Result<Vec<_>>>()
+            .collect::<Vec<_>>();
+        Ok(token_id_lists)
+    }
+
+    pub fn encode_one_hot<A: DataType>(
+        &self,
+        text: &str,
+        add_special_characters: bool,
+        padding_strategy: PaddingStrategy,
+        require_grad: bool,
+    ) -> Result<Tensor<A>> {
+        let vocab_size = self.vocab_size();
+        let token_id_lists = self.encode(&[text], add_special_characters, padding_strategy)?;
+        let token_id_list = token_id_lists.last().unwrap();
+        let seq_len = token_id_list.len();
+        let one_hot_data: Vec<_> = token_id_list
+            .into_par_iter()
+            .flat_map(|&id| {
+                let mut one_hot = vec![A::zero(); vocab_size];
+                one_hot[id as usize] = A::one();
+                one_hot
+            })
+            .collect();
+        let one_hot_tensor = Tensor::new(
+            &[vocab_size, seq_len],
+            Arc::from(one_hot_data),
+            require_grad,
+        );
+        Ok(one_hot_tensor)
     }
 
     /// Decode a list of token IDs into a string
-    pub fn decode(&self, token_id_lists: &[&[TokenId]]) -> Vec<String> {
+    pub fn decode(&self, token_id_lists: &[Vec<TokenId>]) -> Vec<String> {
         token_id_lists
             .par_iter()
             .map(|token_ids| {
-                token_ids
-                    .iter()
-                    .map(|token_id| {
-                        String::from_utf8(self.id_to_token[*token_id as usize].to_vec()).unwrap()
-                    })
-                    .fold(String::new(), |mut acc, token| {
-                        acc.push_str(&token);
-                        acc
-                    })
+                let bytes: Vec<u8> = token_ids
+                    .into_iter()
+                    .flat_map(|token_id| self.id_to_token[*token_id as usize].to_vec())
+                    .collect();
+
+                String::from_utf8(bytes).unwrap_or_else(|_| format!("<Invalid UTF-8 sequence>"))
             })
             .collect()
+    }
+
+    ///Decode from one-hot tensor
+    pub fn decode_one_hot(&self, one_hot_tensor: &Tensor<f32>) -> Vec<String> {
+        let token_id_lists = one_hot_tensor
+            .data()
+            .par_iter()
+            .enumerate()
+            .map(|(i, &value)| {
+                if value > 0.5 {
+                    Some(i as TokenId)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let token_ids = token_id_lists
+            .into_iter()
+            .filter_map(|x| x)
+            .collect::<Vec<TokenId>>();
+
+        self.decode(&[token_ids])
     }
 }
 
@@ -181,13 +341,11 @@ pub fn train_tokenizer(
         let token_1 = vocab[token_id_1 as usize].clone();
         let token_2 = vocab[token_id_2 as usize].clone();
 
-        let new_token: Token = Arc::from(
-            token_1
-                .iter()
-                .chain(token_2.iter())
-                .copied()
-                .collect::<Token>(),
-        );
+        let new_token: Token = token_1
+            .iter()
+            .chain(token_2.iter())
+            .copied()
+            .collect::<Token>();
 
         let new_token_string = String::from_utf8(new_token.to_vec())
             .unwrap_or_else(|_| format!("Failed to convert token to string: {:?}", new_token));
@@ -304,6 +462,31 @@ pub fn train_tokenizer(
     }
     println!("Tokenizer training completed.");
     vocab
+}
+
+pub fn get_last_col<A: DataType>(x: &Tensor<A>) -> Tensor<A> {
+    let num_cols = x.shape()[1];
+    let last_col = x
+        .data()
+        .iter()
+        .step_by(num_cols)
+        .cloned()
+        .collect::<Vec<_>>();
+    Tensor::new(&[x.shape()[0], 1], Arc::from(last_col), false)
+}
+
+pub fn sample_token(logits: &Tensor<f32>, temperature: f32) -> (TokenId, Vec<f32>) {
+    let logits_array = &logits.array();
+    let logits_array = logits_array / temperature;
+    let logits_tensor = Tensor::new(&[logits_array.dim[0], 1], logits_array.data, false);
+    let probs_tensor = logits_tensor.softmax_col();
+    let probs_tensor_data: Arc<Vec<_>> = probs_tensor.data();
+
+    let mut rng = rand::thread_rng();
+    let dist = rand::distributions::WeightedIndex::new(probs_tensor_data.iter()).unwrap();
+
+    let sample = dist.sample(&mut rng);
+    (sample as TokenId, probs_tensor_data.to_vec())
 }
 
 fn save_vocab_json(tokens: &[Token], path: &Path) -> Result<()> {
