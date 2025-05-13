@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use crate::{
     tensor::{DataType, Tensor},
-    Tokenizer,
+    TokenId,
 };
 
 pub trait Model<A: DataType>: Debug {
@@ -103,6 +103,15 @@ impl<A: DataType> Linear<A> {
         let weight = Tensor::random(&[output_dim, input_dim], true);
         Self { weight, bias: None }
     }
+
+    pub fn random_with_bias(input_dim: usize, output_dim: usize, bias_dim: usize) -> Self {
+        let weight = Tensor::random(&[output_dim, input_dim], true);
+        let bias = Tensor::random(&[output_dim, bias_dim], true);
+        Self {
+            weight,
+            bias: Some(bias),
+        }
+    }
 }
 
 impl<A: DataType> Model<A> for Linear<A> {
@@ -144,37 +153,14 @@ pub fn cross_entropy<A: DataType>(pred_logits: &Tensor<A>, true_logits: &Tensor<
 
 pub fn cross_entropy_labels<A: DataType>(
     pred_logits: &Tensor<A>,
-    true_labels: &Vec<usize>,
+    true_labels: &[TokenId],
 ) -> Tensor<A> {
     assert_eq!(pred_logits.shape()[1], true_labels.len());
     let probs = pred_logits.softmax_col();
     let mut loss = Tensor::zeros(&[1], true);
     for (i, &true_label) in true_labels.iter().enumerate() {
-        let prob = probs.index(&[true_label, i]);
+        let prob = probs.index(&[true_label as usize, i]);
         loss = &loss - &(prob.log());
     }
     &loss / A::from_f64(true_labels.len() as f64)
-}
-
-pub fn cross_entropy_llm_labels<A: DataType>(
-    pred_logits: &Tensor<A>,
-    true_labels: &Vec<usize>,
-) -> Tensor<A> {
-    assert_eq!(pred_logits.shape()[1], true_labels.len());
-    eprintln!("pred_logits: {:?}", pred_logits.shape());
-    let vocab_file_path =
-        std::path::Path::new("/Users/benchen/workspace/ice-nine/data/wikitext103_tok.json");
-    let tokenizer = Tokenizer::load_from_file(vocab_file_path).expect("Failed to load tokenizer");
-    eprintln!("pred_logits: {:?}", pred_logits.shape());
-    let pred_probs = pred_logits.softmax_col();
-    let mut loss = Tensor::zeros(&[1], true);
-    for i in 0..true_labels.len() - 1 {
-        let true_label = true_labels[i + 1];
-        let decoded_true_label = tokenizer.decode(&[vec![true_label as u32]]);
-        eprintln!("true_label, i: {:?}, {}", decoded_true_label, i);
-        let pred_prob = pred_probs.index(&[true_label, i]);
-        eprintln!("pred_prob: {:?}", pred_prob);
-        loss = &loss - &(pred_prob.log());
-    }
-    &loss / A::from_f64((true_labels.len() - 1) as f64)
 }

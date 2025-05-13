@@ -56,8 +56,8 @@ impl<A: DataType> Optimizer<A> for SGD<A> {
                 decayed_grad
             };
             p.update(self.lr.clone(), &effective_grad);
-            self.step += 1;
         }
+        self.step += 1;
     }
 
     fn zero_grad(&mut self) {

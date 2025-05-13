@@ -10,9 +10,9 @@ use std::sync::Arc;
 
 use crate::{DataType, Tensor};
 
-type Token = Arc<[u8]>;
+pub type Token = Arc<[u8]>;
 
-type TokenId = u32;
+pub type TokenId = u32;
 
 type Bigram = (TokenId, TokenId);
 
@@ -223,14 +223,11 @@ impl Tokenizer {
         let token_id_lists = self.encode(&[text], add_special_characters, padding_strategy)?;
         let token_id_list = token_id_lists.last().unwrap();
         let seq_len = token_id_list.len();
-        let one_hot_data: Vec<_> = token_id_list
-            .into_par_iter()
-            .flat_map(|&id| {
-                let mut one_hot = vec![A::zero(); vocab_size];
-                one_hot[id as usize] = A::one();
-                one_hot
-            })
-            .collect();
+        let mut one_hot_data = vec![A::zero(); vocab_size * seq_len];
+        for (n, &token_id) in token_id_list.iter().enumerate() {
+            one_hot_data[n * seq_len + token_id as usize] = A::one();
+        }
+
         let one_hot_tensor = Tensor::new(
             &[vocab_size, seq_len],
             Arc::from(one_hot_data),

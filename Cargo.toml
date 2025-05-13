@@ -15,11 +15,13 @@ readme = "README.md"
 anyhow = "1.0.95"
 base64 = "0.22.1"
 byteorder = "1.5.0"
+hillock = "0.1.0"
 num-traits = "0.2.19"
 rand = "0.8.5"
 rayon = "1.10.0"
 serde_json = "1.0.140"
 statrs = "0.18.0"
+textplots = "0.8.7"
 
 [dev-dependencies]
 serde = { version="1.0.203", features=["derive"] }

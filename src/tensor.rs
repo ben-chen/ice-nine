@@ -53,7 +53,7 @@ impl DataType for f64 {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Array<A: DataType> {
     pub dim: Box<[usize]>,
     pub data: Arc<Vec<A>>,
@@ -162,6 +162,11 @@ impl<A: DataType> Array<A> {
         let offset = get_offset_from_index(index, &self.dim);
         Array::new(Box::new([1]), Arc::new(vec![self.data[offset].clone()]))
     }
+
+    /// Number of elements
+    pub fn numel(&self) -> usize {
+        self.dim.iter().product()
+    }
 }
 
 fn get_offset_from_index(index: &[usize], dim: &[usize]) -> usize {
@@ -179,6 +184,14 @@ fn get_offset_from_index(index: &[usize], dim: &[usize]) -> usize {
         prod *= dim[dim.len() - 1 - i];
     }
     offset
+}
+
+impl<A: DataType> Debug for Array<A> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let data = &self.data;
+        let dims = &self.dim;
+        format_nested(f, data, dims, 0, 0)
+    }
 }
 
 #[derive(Clone)]
@@ -276,7 +289,7 @@ impl<A: DataType> Debug for Tensor<A> {
         format_nested(f, data, dims, 0, 0)?;
 
         if let Some(grad) = &inner_tensor.grad {
-            write!(f, "\ngrad: {:?}", grad.data)?;
+            write!(f, "\ngrad:\n{:?}", grad)?;
         }
 
         if let Some(backward_node) = &inner_tensor.backward_node {
@@ -389,10 +402,12 @@ impl<A: DataType> Tensor<A> {
 
     /// Make a tensor of random values with a given shape
     pub fn random(dim: &[usize], require_grad: bool) -> Self {
-        let data = Arc::new(vec![
-            A::from_f64(rand::random::<f64>());
-            dim.iter().product()
-        ]);
+        let data = Arc::new(
+            vec![A::zero(); dim.iter().product()]
+                .iter()
+                .map(|_| A::from_f64(rand::random::<f64>()))
+                .collect::<Vec<_>>(),
+        );
         Tensor::wrap(InnerTensor::_new(
             Array::new(dim.into(), data),
             require_grad,
@@ -990,6 +1005,11 @@ impl<A: DataType> Tensor<A> {
             backward_node,
         ))
     }
+
+    /// Number of elements
+    pub fn numel(&self) -> usize {
+        self.inner_tensor().array.numel()
+    }
 }
 
 // Tensor operators with constants
@@ -997,7 +1017,7 @@ impl<A: DataType> Tensor<A> {
 impl<A: DataType> Add<A> for &Tensor<A> {
     type Output = Tensor<A>;
 
-    /// Element-wise addition
+    /// Addition by a constant
     fn add(self, other: A) -> Tensor<A> {
         let self_inner = self.inner_tensor();
         let result_array = &self_inner.array + other;
@@ -1005,7 +1025,7 @@ impl<A: DataType> Add<A> for &Tensor<A> {
         let require_grad = self_inner.require_grad;
         let backward_node = if require_grad {
             let grad_fn: GradFn<A> = Box::new(|self_grad, _inputs| vec![self_grad.clone()]);
-            Some(BackwardNode::new(grad_fn, vec![self.clone()], "add"))
+            Some(BackwardNode::new(grad_fn, vec![self.clone()], "const add"))
         } else {
             None
         };
@@ -1022,7 +1042,7 @@ impl<A: DataType> Add<A> for &Tensor<A> {
 impl<A: DataType> Sub<A> for &Tensor<A> {
     type Output = Tensor<A>;
 
-    /// Element-wise subtraction
+    /// Subtraction by a constant
     fn sub(self, other: A) -> Tensor<A> {
         let self_inner = self.inner_tensor();
         let result_array = &self_inner.array - other;
@@ -1030,7 +1050,7 @@ impl<A: DataType> Sub<A> for &Tensor<A> {
         let require_grad = self_inner.require_grad;
         let backward_node = if require_grad {
             let grad_fn: GradFn<A> = Box::new(|self_grad, _inputs| vec![self_grad.clone()]);
-            Some(BackwardNode::new(grad_fn, vec![self.clone()], "sub"))
+            Some(BackwardNode::new(grad_fn, vec![self.clone()], "const sub"))
         } else {
             None
         };
@@ -1056,7 +1076,7 @@ impl<A: DataType> Mul<A> for &Tensor<A> {
         let backward_node = if require_grad {
             let grad_fn: GradFn<A> =
                 Box::new(move |self_grad, _inputs| vec![&self_grad.clone() * other.clone()]);
-            Some(BackwardNode::new(grad_fn, vec![self.clone()], "mul"))
+            Some(BackwardNode::new(grad_fn, vec![self.clone()], "const mul"))
         } else {
             None
         };
@@ -1082,7 +1102,7 @@ impl<A: DataType> Div<A> for &Tensor<A> {
         let backward_node = if require_grad {
             let grad_fn: GradFn<A> =
                 Box::new(move |self_grad, _inputs| vec![&self_grad.clone() / other.clone()]);
-            Some(BackwardNode::new(grad_fn, vec![self.clone()], "div"))
+            Some(BackwardNode::new(grad_fn, vec![self.clone()], "const div"))
         } else {
             None
         };
