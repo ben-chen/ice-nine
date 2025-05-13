@@ -10,3 +10,5 @@ pub mod optimizer;
 pub use optimizer::*;
 pub mod tokenizer;
 pub use tokenizer::*;
+pub mod training;
+pub use training::*;

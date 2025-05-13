@@ -53,6 +53,7 @@ impl DataType for f64 {
     }
 }
 
+/// The Array struct is the storage underlying the Tensor struct
 #[derive(Clone)]
 pub struct Array<A: DataType> {
     pub dim: Box<[usize]>,
