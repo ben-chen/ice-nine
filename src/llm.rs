@@ -81,7 +81,7 @@ fn causal_mask<A: DataType>(size: usize) -> Tensor<A> {
             }
         }
     }
-    Tensor::new(&[size, size], Arc::from(mask), false)
+    Tensor::new(&[size, size], crate::Storage(Arc::from(mask)), false)
 }
 
 impl<A: DataType> Model<A> for Attention<A> {
@@ -95,7 +95,7 @@ impl<A: DataType> Model<A> for Attention<A> {
         let scaled_scores = &scores / (A::from_f64((d_head as f64).sqrt()));
         let seq_len = x.shape()[1];
         let causal_scores = &scaled_scores + &causal_mask(seq_len);
-        let softmax_scores = causal_scores.softmax_row();
+        let softmax_scores = causal_scores.softmax_row().t();
         let attention_output = &v % &softmax_scores;
         attention_output
     }

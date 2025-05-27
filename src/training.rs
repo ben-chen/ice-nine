@@ -6,9 +6,8 @@ pub fn display_loss(losses: &[f32]) {
             &losses
                 .iter()
                 .enumerate()
-                .map(|(i, &y)| (i as f32, y as f32))
+                .map(|(i, &y)| (i as f32, y))
                 .collect::<Vec<_>>(),
         ))
         .display();
 }
-

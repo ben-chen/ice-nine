@@ -11,7 +11,7 @@ macro_rules! tensor {
             panic!("Data length {} does not match product of dimensions {}", data.len(), expected_len);
         }
 
-        crate::tensor::Tensor::new(&dims, data, true)
+        crate::tensor::Tensor::new(&dims, crate::tensor::Storage::new(data.to_vec()), true)
     }};
 
     // Pattern: data array, dimensions, and no_grad
@@ -25,7 +25,7 @@ macro_rules! tensor {
             panic!("Data length {} does not match product of dimensions {}", data.len(), expected_len);
         }
 
-        crate::tensor::Tensor::new(&dims, data, false)
+        crate::tensor::Tensor::new(&dims, crate::tensor::Storage::new(data.to_vec()), false)
     }};
 }
 

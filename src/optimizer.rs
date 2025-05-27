@@ -1,4 +1,4 @@
-use crate::{Array, DataType, Tensor};
+use crate::{View, DataType, Tensor};
 
 pub trait Optimizer<A: DataType> {
     fn step_num(&self) -> usize;
@@ -12,7 +12,7 @@ pub struct SGD<A: DataType> {
     parameters: Vec<Tensor<A>>,
     weight_decay: A,
     momentum: A,
-    rolling_average_gradient: Vec<Array<A>>,
+    rolling_average_gradient: Vec<View<A>>,
 }
 
 impl<A: DataType> SGD<A> {
@@ -75,8 +75,8 @@ pub struct AdamW<A: DataType> {
     beta1: A,
     beta2: A,
     epsilon: A,
-    m: Vec<Array<A>>,
-    v: Vec<Array<A>>,
+    m: Vec<View<A>>,
+    v: Vec<View<A>>,
 }
 
 impl<A: DataType> AdamW<A> {

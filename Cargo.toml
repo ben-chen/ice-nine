@@ -1,10 +1,10 @@
 [package]
 name = "ice-nine"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 authors = ["Ben Chen <chenbenjamin2@gmail.com>"]
 
-description = "Simple ML library"
+description = "Simple ML library inspired by PyTorch"
 repository = "https://github.com/ben-chen/ice-nine"
 keywords = ["deep-learning", "machine-learning"]
 categories = ["science"]
@@ -12,17 +12,17 @@ license = "MIT/Apache-2.0"
 readme = "README.md"
 
 [dependencies]
-anyhow = "1.0.95"
+anyhow = "1.0.98"
 base64 = "0.22.1"
 byteorder = "1.5.0"
-hillock = "0.1.0"
+hillock = "0.1.1"
 num-traits = "0.2.19"
-rand = "0.8.5"
+rand = "0.9.1"
 rayon = "1.10.0"
 serde_json = "1.0.140"
 statrs = "0.18.0"
 textplots = "0.8.7"
 
 [dev-dependencies]
-serde = { version="1.0.203", features=["derive"] }
-toml = "0.8.19"
+serde = { version="1.0.219", features=["derive"] }
+toml = "0.8.22"

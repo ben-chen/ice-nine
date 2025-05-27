@@ -1,5 +1,6 @@
 use anyhow::{Error, Result};
 use base64::{engine::general_purpose, Engine};
+use rand::distr::weighted::WeightedIndex;
 use rand::prelude::Distribution;
 use rayon::prelude::*;
 use std::collections::{BinaryHeap, HashMap};
@@ -230,7 +231,7 @@ impl Tokenizer {
 
         let one_hot_tensor = Tensor::new(
             &[vocab_size, seq_len],
-            Arc::from(one_hot_data),
+            crate::Storage(Arc::from(one_hot_data)),
             require_grad,
         );
         Ok(one_hot_tensor)
@@ -242,11 +243,11 @@ impl Tokenizer {
             .par_iter()
             .map(|token_ids| {
                 let bytes: Vec<u8> = token_ids
-                    .into_iter()
+                    .iter()
                     .flat_map(|token_id| self.id_to_token[*token_id as usize].to_vec())
                     .collect();
 
-                String::from_utf8(bytes).unwrap_or_else(|_| format!("<Invalid UTF-8 sequence>"))
+                String::from_utf8(bytes).unwrap_or_else(|_| "<Invalid UTF-8 sequence>".to_string())
             })
             .collect()
     }
@@ -268,7 +269,7 @@ impl Tokenizer {
 
         let token_ids = token_id_lists
             .into_iter()
-            .filter_map(|x| x)
+            .flatten()
             .collect::<Vec<TokenId>>();
 
         self.decode(&[token_ids])
@@ -285,6 +286,7 @@ impl Tokenizer {
 /// - `vocab_size`: Size of the vocabulary.
 /// - `unk_token_id`: ID of the unknown token.
 /// - `output_file`: Optional path to save the tokenizer.
+///
 /// Returns:
 /// - A vector of tokens.
 pub fn train_tokenizer(
@@ -469,7 +471,11 @@ pub fn get_last_col<A: DataType>(x: &Tensor<A>) -> Tensor<A> {
         .step_by(num_cols)
         .cloned()
         .collect::<Vec<_>>();
-    Tensor::new(&[x.shape()[0], 1], Arc::from(last_col), false)
+    Tensor::new(
+        &[x.shape()[0], 1],
+        crate::Storage(Arc::from(last_col)),
+        false,
+    )
 }
 
 pub fn sample_token(logits: &Tensor<f32>, temperature: f32) -> (TokenId, Vec<f32>) {
@@ -479,8 +485,8 @@ pub fn sample_token(logits: &Tensor<f32>, temperature: f32) -> (TokenId, Vec<f32
     let probs_tensor = logits_tensor.softmax_col();
     let probs_tensor_data: Arc<Vec<_>> = probs_tensor.data();
 
-    let mut rng = rand::thread_rng();
-    let dist = rand::distributions::WeightedIndex::new(probs_tensor_data.iter()).unwrap();
+    let mut rng = rand::rng();
+    let dist = WeightedIndex::new(probs_tensor_data.iter()).unwrap();
 
     let sample = dist.sample(&mut rng);
     (sample as TokenId, probs_tensor_data.to_vec())
