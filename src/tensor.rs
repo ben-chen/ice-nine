@@ -481,9 +481,7 @@ impl<A: DataType> Tensor<A> {
     /// Get the inputs used to calculate the tensor
     pub fn inputs(&self) -> Option<Vec<Tensor<A>>> {
         self.0.backward_node.as_ref().map(|node| {
-            node.input_tensors
-                .iter().cloned()
-                .collect()
+            node.input_tensors.to_vec()
         })
     }
 
