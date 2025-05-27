@@ -55,6 +55,12 @@ impl<A: DataType> Debug for Sequential<A> {
 
 pub struct Gelu {}
 
+impl Default for Gelu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Gelu {
     pub fn new() -> Self {
         Self {}
@@ -117,12 +123,12 @@ impl<A: DataType> Linear<A> {
 impl<A: DataType> Model<A> for Linear<A> {
     fn forward(&self, x: &Tensor<A>) -> Tensor<A> {
         let output = &self.weight % x;
-        let output = if let Some(bias) = &self.bias {
+        
+        if let Some(bias) = &self.bias {
             &output + bias
         } else {
             output
-        };
-        output
+        }
     }
 
     fn parameters(&self) -> Vec<Tensor<A>> {
@@ -147,8 +153,8 @@ pub fn cross_entropy<A: DataType>(pred_logits: &Tensor<A>, true_logits: &Tensor<
     assert_eq!(pred_logits.shape(), true_logits.shape());
     let pred_logits = pred_logits.softmax_col();
     let true_logits = true_logits.softmax_col();
-    let loss = -&(&true_logits * &pred_logits.log()).sum_all();
-    loss
+    
+    -&(&true_logits * &pred_logits.log()).sum_all()
 }
 
 pub fn cross_entropy_labels<A: DataType>(

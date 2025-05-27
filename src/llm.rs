@@ -33,8 +33,8 @@ impl<A: DataType> Model<A> for LayerNorm<A> {
         let normalized = &(x_centered / &col_vars.sqrt());
         let weight = &self.weight.broadcast_col(num_cols);
         let bias = &self.bias.broadcast_col(num_cols);
-        let renormalized = &(normalized * weight) + bias;
-        renormalized
+        
+        &(normalized * weight) + bias
     }
 
     fn parameters(&self) -> Vec<Tensor<A>> {
@@ -96,8 +96,8 @@ impl<A: DataType> Model<A> for Attention<A> {
         let seq_len = x.shape()[1];
         let causal_scores = &scaled_scores + &causal_mask(seq_len);
         let softmax_scores = causal_scores.softmax_row().t();
-        let attention_output = &v % &softmax_scores;
-        attention_output
+        
+        &v % &softmax_scores
     }
 
     fn parameters(&self) -> Vec<Tensor<A>> {
@@ -143,8 +143,8 @@ impl<A: DataType> Model<A> for AttentionBlock<A> {
     fn forward(&self, x: &Tensor<A>) -> Tensor<A> {
         let layer_norm_output = &self.layer_norm.forward(x);
         let attention_output = &self.attention.forward(layer_norm_output);
-        let residual_output = x + attention_output;
-        residual_output
+        
+        x + attention_output
     }
 
     fn parameters(&self) -> Vec<Tensor<A>> {
@@ -205,10 +205,10 @@ impl<A: DataType> Model<A> for MlpBlock<A> {
     fn forward(&self, x: &Tensor<A>) -> Tensor<A> {
         let layer_norm_output = &self.layer_norm.forward(x);
         let linear1_output = &self.linear1.forward(layer_norm_output);
-        let activation_output = &self.activation.forward(&linear1_output);
-        let linear2_output = &self.linear2.forward(&activation_output);
-        let residual_output = x + linear2_output;
-        residual_output
+        let activation_output = &self.activation.forward(linear1_output);
+        let linear2_output = &self.linear2.forward(activation_output);
+        
+        x + linear2_output
     }
 
     fn parameters(&self) -> Vec<Tensor<A>> {
@@ -259,8 +259,8 @@ impl<A: DataType> TransformerBlock<A> {
 impl<A: DataType> Model<A> for TransformerBlock<A> {
     fn forward(&self, x: &Tensor<A>) -> Tensor<A> {
         let attention_output = &self.attention_block.forward(x);
-        let mlp_output = self.mlp_block.forward(attention_output);
-        mlp_output
+        
+        self.mlp_block.forward(attention_output)
     }
 
     fn parameters(&self) -> Vec<Tensor<A>> {

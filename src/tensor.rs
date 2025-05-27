@@ -215,7 +215,7 @@ impl<A: DataType> View<A> {
             + index
                 .iter()
                 .zip(self.strides.iter())
-                .map(|(&i, &s)| i as isize * s)
+                .map(|(&i, &s)| i * s)
                 .sum::<isize>() as usize
     }
 
@@ -482,8 +482,7 @@ impl<A: DataType> Tensor<A> {
     pub fn inputs(&self) -> Option<Vec<Tensor<A>>> {
         self.0.backward_node.as_ref().map(|node| {
             node.input_tensors
-                .iter()
-                .map(|tensor| tensor.clone())
+                .iter().cloned()
                 .collect()
         })
     }
@@ -1163,9 +1162,9 @@ impl<A: DataType> Tensor<A> {
         let stabilized_tensor = self - col_maxes;
         let exp_tensor = &stabilized_tensor.exp();
         let sum_tensor = &exp_tensor.sum_cols();
-        let softmax_tensor = exp_tensor / sum_tensor;
+        
 
-        softmax_tensor
+        exp_tensor / sum_tensor
     }
 
     /// Row-wise softmax
@@ -1174,9 +1173,9 @@ impl<A: DataType> Tensor<A> {
         let stabilized_tensor = self - row_maxes;
         let exp_tensor = stabilized_tensor.exp();
         let sum_tensor = exp_tensor.sum_rows();
-        let softmax_tensor = &exp_tensor / &sum_tensor;
+        
 
-        softmax_tensor
+        &exp_tensor / &sum_tensor
     }
 
     /// Broadcast 1-D tensor to 2-D tensor as columns

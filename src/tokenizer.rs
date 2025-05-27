@@ -165,22 +165,19 @@ impl Tokenizer {
             PaddingStrategy::None => None,
         };
         if add_special_characters {
-            match pad_length {
-                Some(length) => {
-                    if let Some((_, pad_tok_id)) = &self.pad_token_and_id {
-                        token_lists.par_iter_mut().for_each(|tokens| {
-                            let pad_len = length - tokens.len();
-                            let pad_token = self.id_to_token[*pad_tok_id as usize].clone();
-                            tokens.extend(std::iter::repeat(pad_token).take(pad_len));
-                        });
-                    } else {
-                        return Err(Error::msg(format!(
-                            "Pad token should be set for PaddingStrategy {:?}",
-                            padding_strategy
-                        )));
-                    }
+            if let Some(length) = pad_length {
+                if let Some((_, pad_tok_id)) = &self.pad_token_and_id {
+                    token_lists.par_iter_mut().for_each(|tokens| {
+                        let pad_len = length - tokens.len();
+                        let pad_token = self.id_to_token[*pad_tok_id as usize].clone();
+                        tokens.extend(std::iter::repeat(pad_token).take(pad_len));
+                    });
+                } else {
+                    return Err(Error::msg(format!(
+                        "Pad token should be set for PaddingStrategy {:?}",
+                        padding_strategy
+                    )));
                 }
-                None => (),
             }
         }
         Ok(token_lists)
