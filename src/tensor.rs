@@ -66,6 +66,10 @@ impl<A: DataType> Storage<A> {
         self.0.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     pub fn iter(&self) -> std::slice::Iter<A> {
         self.0.iter()
     }
@@ -178,6 +182,10 @@ impl<A: DataType> View<A> {
 
     pub fn len(&self) -> usize {
         self.data.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.0.is_empty()
     }
 
     pub fn zeros(dim: &[usize]) -> Self {
@@ -480,9 +488,10 @@ impl<A: DataType> Tensor<A> {
 
     /// Get the inputs used to calculate the tensor
     pub fn inputs(&self) -> Option<Vec<Tensor<A>>> {
-        self.0.backward_node.as_ref().map(|node| {
-            node.input_tensors.to_vec()
-        })
+        self.0
+            .backward_node
+            .as_ref()
+            .map(|node| node.input_tensors.to_vec())
     }
 
     /// Get the shape of the tensor
@@ -1160,7 +1169,6 @@ impl<A: DataType> Tensor<A> {
         let stabilized_tensor = self - col_maxes;
         let exp_tensor = &stabilized_tensor.exp();
         let sum_tensor = &exp_tensor.sum_cols();
-        
 
         exp_tensor / sum_tensor
     }
@@ -1171,7 +1179,6 @@ impl<A: DataType> Tensor<A> {
         let stabilized_tensor = self - row_maxes;
         let exp_tensor = stabilized_tensor.exp();
         let sum_tensor = exp_tensor.sum_rows();
-        
 
         &exp_tensor / &sum_tensor
     }
